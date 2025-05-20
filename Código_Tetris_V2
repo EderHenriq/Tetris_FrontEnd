@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tetris</title>
+    <style>
+        body {
+            background: #111;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            color: #fff;
+            font-family: Arial, sans-serif;
+            margin: 0;
+        }
+
+        #game-container { 
+            display: flex;
+            align-items: flex-start; 
+        }
+
+        canvas {
+            background: #222;
+            box-shadow: 0 0 20px #0ff;
+            border: 2px solid #0ff; 
+        }
+
+        #info-container { 
+            margin-left: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        #score {
+            font-size: 24px;
+            color: #0ff;
+            margin-bottom: 10px; 
+        }
+
+        #next-piece-container { 
+            margin-top: 20px;
+        }
+
+        #next-piece-canvas {
+            background: #222;
+            box-shadow: 0 0 10px #f0f;
+            border: 1px solid #f0f;
+        }
+
+        h3 {
+            color: #f0f;
+            margin-bottom: 5px;
+            text-align: center;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="game-container">
+        <canvas id="tetris" width="240" height="400"></canvas>
+        <div id="info-container">
+            <div id="score">Score: 0</div>
+            <div id="next-piece-container">
+                <h3>Próxima</h3>
+                <canvas id="next-piece-canvas" width="80" height="80"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('tetris');
+        const context = canvas.getContext('2d');
+        context.scale(20, 20); 
+
+        const nextPieceCanvas = document.getElementById('next-piece-canvas');
+        const nextPieceContext = nextPieceCanvas.getContext('2d');
+        nextPieceContext.scale(20, 20); 
+
+        const colors = [
+            null,        
+            '#FF0D72',   // 1 - T
+            '#0DC2FF',   // 2 - O
+            '#0DFF72',   // 3 - L
+            '#F538FF',   // 4 - J
+            '#FF8E0D',   // 5 - I
+            '#FFE138',   // 6 - S
+            '#3877FF',   // 7 - Z
+        ];
+
+        function createPiece(type) {
+            if (type === 'T') {
+                return [
+                    [0, 0, 0],
+                    [1, 1, 1],
+                    [0, 1, 0],
+                ];
+            } else if (type === 'O') {
+                return [
+                    [2, 2],
+                    [2, 2],
+                ];
+            } else if (type === 'L') {
+                return [
+                    [0, 3, 0],
+                    [0, 3, 0],
+                    [0, 3, 3],
+                ];
+            } else if (type === 'J') {
+                return [
+                    [0, 4, 0],
+                    [0, 4, 0],
+                    [4, 4, 0],
+                ];
+            } else if (type === 'I') {
+                return [
+                    [0, 5, 0, 0],
+                    [0, 5, 0, 0],
+                    [0, 5, 0, 0],
+                    [0, 5, 0, 0],
+                ];
+            } else if (type === 'S') {
+                return [
+                    [0, 6, 6],
+                    [6, 6, 0],
+                    [0, 0, 0],
+                ];
+            } else if (type === 'Z') {
+                return [
+                    [7, 7, 0],
+                    [0, 7, 7],
+                    [0, 0, 0],
+                ];
+            }
+        }
+
+        const pieceTypes = 'TOLJISZ';
+        let upcomingPieceType = pieceTypes[pieceTypes.length * Math.random() | 0]; 
+
+        function createMatrix(w, h) {
+            const matrix = [];
+            while (h--) {
+                matrix.push(new Array(w).fill(0));
+            }
+            return matrix;
+        }
+
+        function drawMatrix(matrix, offset, ctx = context) { 
+            matrix.forEach((row, y) => {
+                row.forEach((value, x) => {
+                    if (value !== 0) {
+                        ctx.fillStyle = colors[value];
+                        ctx.fillRect(x + offset.x, y + offset.y, 1, 1);
+                    }
+                });
+            });
+        }
+
+        function drawNextPiece() {
+            nextPieceContext.fillStyle = '#222'; 
+            nextPieceContext.fillRect(0, 0, nextPieceCanvas.width, nextPieceCanvas.height);
+            const piece = createPiece(upcomingPieceType);
+            const xOffset = (nextPieceCanvas.width / 20 - piece[0].length) / 2; 
+            const yOffset = (nextPieceCanvas.height / 20 - piece.length) / 2; 
+            drawMatrix(piece, { x: xOffset, y: yOffset }, nextPieceContext);
+        }
+
+        function merge(arena, player) {
+            player.matrix.forEach((row, y) => {
+                row.forEach((value, x) => {
+                    if (value !== 0) {
+                        arena[y + player.pos.y][x + player.pos.x] = value;
+                    }
+                });
+            });
+        }
+
+        function collide(arena, player) {
+            const [m, o] = [player.matrix, player.pos];
+            for (let y = 0; y < m.length; ++y) {
+                for (let x = 0; x < m[y].length; ++x) {
+                    if (m[y][x] !== 0 &&
+                        (arena[y + o.y] &&
+                            arena[y + o.y][x + o.x]) !== 0) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        let score = 0;
+        let levelThreshold = 50; // Pontos para aumentar a velocidade
+        const initialDropInterval = 1000; // Intervalo inicial de queda
+        let dropInterval = initialDropInterval;
+
+        function playerDrop() {
+            player.pos.y++;
+            if (collide(arena, player)) {
+                player.pos.y--;
+                merge(arena, player);
+                arenaSweep();
+                playerReset();
+                updateScore(); // Atualiza a exibição do score
+                checkSpeedProgression(); // Verifica se deve aumentar a velocidade
+            }
+            dropCounter = 0;
+        }
+
+        function checkSpeedProgression() {
+            if (score >= levelThreshold) {
+                dropInterval = Math.max(100, dropInterval - 100); // Diminui o intervalo, mínimo de 100ms
+                levelThreshold += 50; // Define o próximo limite
+                console.log("Speed Increased! New Interval:", dropInterval);
+            }
+        }
+
+        function playerMove(dir) {
+            player.pos.x += dir;
+            if (collide(arena, player)) {
+                player.pos.x -= dir;
+            }
+        }
+
+        function playerReset() {
+            player.matrix = createPiece(upcomingPieceType); 
+            upcomingPieceType = pieceTypes[pieceTypes.length * Math.random() | 0]; // Gera a nova próxima peça
+            drawNextPiece(); 
+
+            player.pos.y = 0;
+            player.pos.x = (arena[0].length / 2 | 0) - (player.matrix[0].length / 2 | 0);
+
+            if (collide(arena, player)) {
+                arena.forEach(row => row.fill(0));
+                score = 0; 
+                dropInterval = initialDropInterval; // Reseta a velocidade
+                levelThreshold = 50; // Reseta o limite de velocidade
+                updateScore();
+                alert("Game Over! Pontuação: " + score); 
+            }
+        }
+
+        function rotate(matrix, dir) {
+            for (let y = 0; y < matrix.length; ++y) {
+                for (let x = 0; x < y; ++x) {
+                    [matrix[x][y], matrix[y][x]] = [matrix[y][x], matrix[x][y]];
+                }
+            }
+            if (dir > 0) {
+                matrix.forEach(row => row.reverse());
+            } else {
+                matrix.reverse();
+            }
+        }
+
+        function playerRotate() {
+            const pos = player.pos.x;
+            let offset = 1;
+            rotate(player.matrix, 1); 
+            while (collide(arena, player)) {
+                player.pos.x += offset;
+                offset = -(offset + (offset > 0 ? 1 : -1));
+                if (offset > player.matrix[0].length) { 
+                    rotate(player.matrix, -1);
+                    player.pos.x = pos;
+                    return;
+                }
+            }
+        }
+
+        function arenaSweep() {
+            let rowCount = 0; // Mudei para começar em 0 para um cálculo de bônus mais simples
+            outer: for (let y = arena.length - 1; y >= 0; --y) {
+                for (let x = 0; x < arena[y].length; ++x) {
+                    if (arena[y][x] === 0) {
+                        continue outer;
+                    }
+                }
+                const row = arena.splice(y, 1)[0].fill(0);
+                arena.unshift(row);
+                ++y;
+                rowCount++;
+            }
+            // Sistema de pontuação: 10 por linha, bônus por múltiplas linhas
+            if (rowCount > 0) {
+                score += rowCount * 10 * rowCount;
+            }
+        }
+
+        function updateScore() {
+            document.getElementById('score').innerText = 'Score: ' + score;
+        }
+
+        function draw() {
+            context.fillStyle = '#111'; 
+            context.fillRect(0, 0, canvas.width / 20, canvas.height / 20); 
+
+            drawMatrix(arena, { x: 0, y: 0 });
+            drawMatrix(player.matrix, player.pos);
+        }
+
+        let dropCounter = 0;
+        let lastTime = 0;
+
+        function update(time = 0) {
+            const deltaTime = time - lastTime;
+            lastTime = time;
+            dropCounter += deltaTime;
+            if (dropCounter > dropInterval) {
+                playerDrop();
+            }
+            draw();
+            requestAnimationFrame(update);
+        }
+
+        const arena = createMatrix(12, 20); 
+        const player = {
+            pos: { x: 0, y: 0 },
+            matrix: null, 
+        };
+
+        document.addEventListener('keydown', event => {
+            if (event.key === 'ArrowLeft') {
+                playerMove(-1);
+            } else if (event.key === 'ArrowRight') {
+                playerMove(1);
+            } else if (event.key === 'ArrowDown') {
+                playerDrop();
+            } else if (event.key === 'ArrowUp' || event.key === 'w' || event.key === 'W' || event.key === 'x' || event.key === 'X') { // Adicionadas teclas W e X para rotação
+                playerRotate();
+            } else if (event.key === ' ') { 
+                // Implementar hard drop (fazer a peça cair instantaneamente)
+                 while (!collide(arena, player)) {
+                 player.pos.y++;
+                 }
+                 player.pos.y--;
+                 merge(arena, player);
+                 arenaSweep();
+                 playerReset();
+                 updateScore();
+                 checkSpeedProgression();
+                 dropCounter = 0; 
+                console.log("Hard drop (ainda não totalmente funcional)");
+            }
+        });
+
+        playerReset(); 
+        updateScore(); 
+        drawNextPiece(); 
+        update();
+    </script>
+</body>
+
+</html>
